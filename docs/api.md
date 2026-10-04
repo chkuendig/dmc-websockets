@@ -199,7 +199,7 @@ Setting `ws.throttle` changes the setting for all connections. A connection crea
 
 ## HTML5 Builds
 
-In the browser there are no sockets, so the library uses the browser's own WebSocket, through a small JavaScript bridge. The API and events are the same, and the browser does the handshake, framing, TLS and the answers to the server's pings. Events are delivered from `enterFrame`, as with sockets, and `throttle` sets how often.
+In the browser there are no sockets, so the library uses the browser's own WebSocket, through a small JavaScript bridge. The API and events are the same, and the browser does the handshake, framing, TLS and the answers to the server's pings. Events are delivered from `enterFrame`, as with sockets, but every frame: `throttle` has no effect there.
 
 The browser keeps some things to itself:
 

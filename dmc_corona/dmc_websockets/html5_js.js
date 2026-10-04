@@ -92,8 +92,6 @@ per byte.
 
 	window[ NAME ] = {
 
-		apiVersion: 1,
-
 		// { url, protocols } -> { ok, id }
 		open: function( params ) {
 			var protocols = Array.isArray( params.protocols ) ? params.protocols : [];
@@ -171,12 +169,12 @@ per byte.
 			return { ok: true };
 		},
 
-		// { id, maxEvents } -> { ok, events, more }
+		// { id } -> { ok, events }
 		poll: function( params ) {
 			var conn = connections[ params.id ];
 			if ( !conn ) { return fail( 'invalid_id' ); }
-			var max = params.maxEvents > 0 ? params.maxEvents : conn.events.length;
-			var events = conn.events.splice( 0, max );
+			var events = conn.events;
+			conn.events = [];
 			for ( var i = 0; i < events.length; i++ ) {
 				var event = events[ i ];
 				if ( event.buffer ) {
@@ -184,7 +182,7 @@ per byte.
 					delete event.buffer;
 				}
 			}
-			return { ok: true, events: events, more: conn.events.length > 0 };
+			return { ok: true, events: events };
 		},
 
 		// { id } -> { ok }, also for an id already disposed

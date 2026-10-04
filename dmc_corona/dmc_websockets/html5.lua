@@ -58,12 +58,6 @@ two bytes of UTF-8 on the Lua side.
 --]]
 
 
--- Semantic Versioning Specification: http://semver.org/
-
-local VERSION = "1.0.0"
-
-
-
 --====================================================================--
 --== Setup, Constants
 
@@ -71,10 +65,6 @@ local VERSION = "1.0.0"
 -- the bridge: dmc_corona/dmc_websockets/html5_js.js, which defines
 -- window.dmc_corona_dmc_websockets_html5_js
 local BRIDGE_MODULE = 'dmc_corona.dmc_websockets.html5_js'
-local BRIDGE_API = 1
-
--- events read from one connection's queue at a time
-local MAX_EVENTS = 64
 
 local BROWSER_ERROR = "Browser WebSocket failed (browsers don't give the reason)"
 
@@ -82,7 +72,6 @@ local mfloor = math.floor
 local schar = string.char
 local sfind = string.find
 local sgsub = string.gsub
-local sgettimer = system.getTimer
 local tinsert = table.insert
 local tremove = table.remove
 local type = type
@@ -99,27 +88,20 @@ end
 
 local Html5 = {}
 
-Html5.VERSION = VERSION
-
 --== Throttle Constants, the same as dmc_sockets
+-- accepted but unused: connections are read every frame, since reading
+-- the browser's queue costs next to nothing
 
 Html5.OFF = 0
 Html5.LOW = mfloor( 1000/30 )  -- ie, 30 FPS
 Html5.MEDIUM = mfloor( 1000/15 )  -- ie, 15 FPS
 Html5.HIGH = mfloor( 1000/1 )  -- ie, 1 FPS
 
--- milliseconds between reads, shared by all connections
--- default from the [DMC_SOCKETS] THROTTLE_LEVEL setting, as for sockets
-local dmc_sockets_data = _G.__dmc_corona and _G.__dmc_corona.dmc_sockets or {}
-Html5.throttle = type( dmc_sockets_data.throttle_level ) == 'number'
-	and dmc_sockets_data.throttle_level or Html5.OFF
-
 
 local bridge = nil -- JS bridge module, loaded on first use
 
 local connections = {} -- open connections, in the order opened
 local reading = false -- enterFrame listener added
-local last_read = 0
 
 
 
@@ -178,10 +160,6 @@ local function loadBridge()
 	if not ok or type( mod ) ~= 'table' then
 		return nil, "HTML5 bridge not found, expected dmc_corona/dmc_websockets/html5_js.js"
 	end
-	if mod.apiVersion ~= BRIDGE_API then
-		return nil, "HTML5 bridge is version " .. tostring( mod.apiVersion )
-			.. ", expected " .. BRIDGE_API
-	end
 	bridge = mod
 	return bridge
 end
@@ -196,13 +174,6 @@ end
 
 
 local function readAll()
-	local throttle = Html5.throttle or Html5.OFF
-	if throttle > 0 then
-		local now = sgettimer()
-		if now - last_read < throttle then return end
-		last_read = now
-	end
-
 	-- a listener may open or close connections while we go
 	local list = {}
 	for i = 1, #connections do list[i] = connections[i] end
@@ -316,7 +287,7 @@ end
 
 function Connection:_read()
 	if self._id and not self._failed then
-		local result = bridge.poll{ id=self._id, maxEvents=MAX_EVENTS }
+		local result = bridge.poll{ id=self._id }
 		if type( result ) == 'table' and result.ok then
 			local events = result.events or {}
 			for i = 1, #events do

@@ -89,15 +89,14 @@ function open( call, params ) {
 }
 
 function poll( call, id ) {
-	const result = call( 'poll', { id: id, maxEvents: 64 } );
+	const result = call( 'poll', { id: id } );
 	assert.strictEqual( result.ok, true );
 	return result.events;
 }
 
 
 test( 'opens, queues events in order, and reads them', () => {
-	const { bridge, call } = loadBridge();
-	assert.strictEqual( bridge.apiVersion, 1 );
+	const { call } = loadBridge();
 	const { id, ws } = open( call );
 	assert.strictEqual( ws.url, 'wss://example.com/chat' );
 	assert.strictEqual( ws.binaryType, 'arraybuffer' );
@@ -111,17 +110,6 @@ test( 'opens, queues events in order, and reads them', () => {
 		{ kind: 'close', code: 4001, reason: 'bye', wasClean: true }
 	] );
 	assert.deepStrictEqual( poll( call, id ), [] );
-} );
-
-test( 'reads at most maxEvents at a time', () => {
-	const { call } = loadBridge();
-	const { id, ws } = open( call );
-	ws.serverOpen();
-	for ( let i = 0; i < 5; i++ ) { ws.serverMessage( 'm' + i ); }
-	const first = call( 'poll', { id: id, maxEvents: 2 } );
-	assert.strictEqual( first.events.length, 2 );
-	assert.strictEqual( first.more, true );
-	assert.strictEqual( poll( call, id ).length, 4 );
 } );
 
 test( 'passes protocols only when there are some', () => {
@@ -232,7 +220,7 @@ test( 'connections are kept apart, ids are never reused', () => {
 	// the replaced socket's close arrives late
 	a.ws.serverClose( 1000, '' );
 	assert.deepStrictEqual( poll( call, b.id ), [ { kind: 'open' } ] );
-	assert.strictEqual( call( 'poll', { id: a.id, maxEvents: 64 } ).error.kind, 'invalid_id' );
+	assert.strictEqual( call( 'poll', { id: a.id } ).error.kind, 'invalid_id' );
 } );
 
 test( 'dispose closes the browser socket and drops its events', () => {
@@ -250,5 +238,5 @@ test( 'loading twice keeps the live connections', () => {
 	const { window, call } = loadBridge();
 	const { id } = open( call );
 	vm.runInContext( SOURCE, window );
-	assert.strictEqual( call( 'poll', { id: id, maxEvents: 64 } ).ok, true );
+	assert.strictEqual( call( 'poll', { id: id } ).ok, true );
 } );

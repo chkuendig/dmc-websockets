@@ -58,7 +58,7 @@ end
 local Bridge
 
 local function newBridge()
-	local b = { apiVersion=1, conns={}, count=0 }
+	local b = { conns={}, count=0 }
 
 	function b.open( p )
 		if b.open_error then
@@ -88,11 +88,9 @@ local function newBridge()
 	function b.poll( p )
 		local conn = b.conns[ p.id ]
 		if not conn then return { ok=false, error={ kind='invalid_id' } } end
-		local events = {}
-		while #conn.events > 0 and #events < p.maxEvents do
-			table.insert( events, table.remove( conn.events, 1 ) )
-		end
-		return { ok=true, events=events, more=#conn.events > 0 }
+		local events = conn.events
+		conn.events = {}
+		return { ok=true, events=events }
 	end
 	function b.dispose( p )
 		local conn = b.conns[ p.id ]
@@ -475,23 +473,6 @@ function test_lateEventsOfReplacedConnection()
 	assert_equal( 0, #eventsOf( events2, ws2.ONCLOSE ) )
 	assert_equal( ws2.ESTABLISHED, ws2.readyState )
 end
-
-function test_throttle()
-	local ws, conn, events = newSocket{ throttle=WebSocket.LOW }
-	serverOpen( conn )
-	clock = 1000
-	frame() -- first read
-	assert_equal( 1, #events )
-	serverMessage( conn, 'x' )
-	clock = 1010
-	frame()
-	assert_equal( 1, #events, "too soon" )
-	clock = 1000 + WebSocket.LOW
-	frame()
-	assert_equal( 2, #events )
-	ws.throttle = WebSocket.OFF
-end
-
 
 --== Options
 
