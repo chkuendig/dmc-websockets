@@ -8,7 +8,7 @@
 
 The MIT License (MIT)
 
-Copyright (C) 2014-2015 David McCuskey. All Rights Reserved.
+Copyright (C) 2026 Christian Kündig
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -45,7 +45,8 @@ machine, events and options stay in Lua.
 
 Every call takes one object and returns one object, { ok:true, ... } or
 { ok:false, error:{ kind, name, message } }, since values cross as JSON.
-Binary messages cross as base64.
+A binary message crosses as a string of characters U+0000-U+00FF, one
+per byte.
 
 */
 
@@ -58,7 +59,7 @@ Binary messages cross as base64.
 	var connections = {}; // id -> { ws, events }
 	var nextId = 1; // ids are never reused
 
-	// a JS string of bytes, in pieces: apply() has an argument limit
+	// bytes -> string, in pieces: apply() has an argument limit
 	var CHUNK = 0x8000;
 
 	function fail( kind, e ) {
@@ -72,20 +73,19 @@ Binary messages cross as base64.
 		};
 	}
 
-	function toBase64( buffer ) {
+	function toBinaryString( buffer ) {
 		var bytes = new Uint8Array( buffer );
 		var parts = [];
 		for ( var i = 0; i < bytes.length; i += CHUNK ) {
 			parts.push( String.fromCharCode.apply( null, bytes.subarray( i, i + CHUNK ) ) );
 		}
-		return btoa( parts.join( '' ) );
+		return parts.join( '' );
 	}
 
-	function fromBase64( str ) {
-		var bin = atob( str );
-		var bytes = new Uint8Array( bin.length );
-		for ( var i = 0; i < bin.length; i++ ) {
-			bytes[ i ] = bin.charCodeAt( i );
+	function fromBinaryString( str ) {
+		var bytes = new Uint8Array( str.length );
+		for ( var i = 0; i < str.length; i++ ) {
+			bytes[ i ] = str.charCodeAt( i );
 		}
 		return bytes;
 	}
@@ -142,7 +142,7 @@ Binary messages cross as base64.
 			if ( !conn ) { return fail( 'invalid_id' ); }
 			if ( conn.ws.readyState !== 1 ) { return fail( 'not_open' ); }
 			try {
-				conn.ws.send( params.type === 'binary' ? fromBase64( params.data ) : params.data );
+				conn.ws.send( params.type === 'binary' ? fromBinaryString( params.data ) : params.data );
 			} catch ( e ) {
 				return fail( 'send', e );
 			}
@@ -180,7 +180,7 @@ Binary messages cross as base64.
 			for ( var i = 0; i < events.length; i++ ) {
 				var event = events[ i ];
 				if ( event.buffer ) {
-					event.data = toBase64( event.buffer );
+					event.data = toBinaryString( event.buffer );
 					delete event.buffer;
 				}
 			}

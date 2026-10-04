@@ -124,7 +124,7 @@ local function serverFail( conn )
 end
 
 
-local WebSocket, Base64
+local WebSocket
 
 local MODULES = {
 	'dmc_corona.dmc_websockets',
@@ -214,7 +214,6 @@ function suite_setup()
 	}
 
 	require 'dmc_corona_boot'
-	Base64 = require 'dmc_websockets.base64'
 end
 
 function suite_teardown()
@@ -273,6 +272,14 @@ function test_eventsInOneFrameKeepTheirOrder()
 	assert_equal( ws.ONCLOSE, events[4].type )
 end
 
+-- bytes as the bridge carries them: each byte as a character U+0000-U+00FF
+local function latin1( bytes )
+	return ( bytes:gsub( '[\128-\255]', function( c )
+		local b = c:byte()
+		return string.char( 0xC0 + math.floor( b / 0x40 ), 0x80 + b % 0x40 )
+	end ) )
+end
+
 function test_binaryBothWays()
 	local ws, conn, events = openSocket()
 	local bytes = {}
@@ -281,9 +288,9 @@ function test_binaryBothWays()
 
 	ws:send( bytes, { type=ws.BINARY } )
 	assert_equal( 'binary', conn.sent[1].type )
-	assert_equal( Base64.encode( bytes ), conn.sent[1].data )
+	assert_equal( latin1( bytes ), conn.sent[1].data )
 
-	serverMessage( conn, Base64.encode( bytes ), 'binary' )
+	serverMessage( conn, latin1( bytes ), 'binary' )
 	frame()
 	local msgs = eventsOf( events, ws.ONMESSAGE )
 	assert_equal( ws.BINARY, msgs[1].message.type )
@@ -292,7 +299,7 @@ end
 
 function test_badBinaryFromBridgeIsError()
 	local ws, conn, events = openSocket()
-	serverMessage( conn, '@@@@', 'binary' )
+	serverMessage( conn, 'a\196\128b', 'binary' ) -- U+0100
 	frame()
 	assert_equal( 0, #eventsOf( events, ws.ONMESSAGE ) )
 	assert_equal( 1, #eventsOf( events, ws.ONERROR ) )

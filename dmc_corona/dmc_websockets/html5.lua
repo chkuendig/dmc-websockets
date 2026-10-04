@@ -8,7 +8,7 @@
 
 The MIT License (MIT)
 
-Copyright (C) 2014-2015 David McCuskey. All Rights Reserved.
+Copyright (C) 2026 Christian Kündig
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -51,7 +51,9 @@ from inside a browser callback, and one connection's late events can't
 reach another, since each has its own id.
 
 Values cross the bridge as JSON, which carries only valid UTF-8 text, so
-binary messages cross as base64.
+a binary message crosses as a string of characters U+0000-U+00FF, one per
+byte (what the browser's atob() and btoa() use): a byte from 0x80 up is
+two bytes of UTF-8 on the Lua side.
 
 --]]
 
@@ -59,14 +61,6 @@ binary messages cross as base64.
 -- Semantic Versioning Specification: http://semver.org/
 
 local VERSION = "1.0.0"
-
-
-
---====================================================================--
---== Imports
-
-
-local Base64 = require 'dmc_websockets.base64'
 
 
 
@@ -85,10 +79,22 @@ local MAX_EVENTS = 64
 local BROWSER_ERROR = "Browser WebSocket failed (browsers don't give the reason)"
 
 local mfloor = math.floor
+local schar = string.char
+local sfind = string.find
+local sgsub = string.gsub
 local sgettimer = system.getTimer
 local tinsert = table.insert
 local tremove = table.remove
 local type = type
+
+
+-- a byte from 0x80 up <-> its character as UTF-8, U+0080-U+00FF
+local TO_UTF8, FROM_UTF8 = {}, {}
+for b = 0x80, 0xFF do
+	local u = schar( 0xC0 + mfloor( b / 0x40 ), 0x80 + b % 0x40 )
+	TO_UTF8[ schar( b ) ] = u
+	FROM_UTF8[ u ] = schar( b )
+end
 
 
 local Html5 = {}
@@ -244,7 +250,7 @@ function Connection:send( ftype, data )
 
 	local params = { id=self._id, type=ftype, data=data }
 	if ftype == 'binary' then
-		params.data = Base64.encode( data )
+		params.data = sgsub( data, '[\128-\255]', TO_UTF8 )
 	end
 
 	local result = bridge.send( params )
@@ -336,12 +342,12 @@ function Connection:_browserEvent( event )
 	elseif kind == 'message' then
 		local data = event.data
 		if event.type == 'binary' then
-			local emsg
-			data, emsg = Base64.decode( data or '' )
-			if not data then
-				self:_fail( "HTML5 bridge sent bad binary data: " .. emsg )
+			data = data or ''
+			if sfind( data, '[\196-\255]' ) then
+				self:_fail( "HTML5 bridge sent a character above U+00FF in binary data" )
 				return
 			end
+			data = sgsub( data, '[\194\195][\128-\191]', FROM_UTF8 )
 		end
 		self:_deliver{ type='message', data=data, ftype=event.type }
 

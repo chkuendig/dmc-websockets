@@ -143,16 +143,16 @@ test( 'binary both ways, every byte value', () => {
 	const { id, ws } = open( call );
 	ws.serverOpen();
 	const bytes = Uint8Array.from( { length: 256 * 3 + 1 }, ( _, i ) => i % 256 );
-	const b64 = Buffer.from( bytes ).toString( 'base64' );
+	const str = Buffer.from( bytes ).toString( 'latin1' );
 
-	assert.deepStrictEqual( call( 'send', { id: id, type: 'binary', data: b64 } ), { ok: true } );
+	assert.deepStrictEqual( call( 'send', { id: id, type: 'binary', data: str } ), { ok: true } );
 	assert.deepStrictEqual( Buffer.from( ws.sent[ 0 ] ), Buffer.from( bytes ) );
 
 	ws.serverMessage( bytes.buffer );
 	ws.serverMessage( new ArrayBuffer( 0 ) );
 	const events = poll( call, id ).slice( 1 );
 	assert.deepStrictEqual( events, [
-		{ kind: 'message', type: 'binary', data: b64 },
+		{ kind: 'message', type: 'binary', data: str },
 		{ kind: 'message', type: 'binary', data: '' }
 	] );
 } );
@@ -164,7 +164,7 @@ test( 'a large binary message', () => {
 	const bytes = new Uint8Array( 1024 * 1024 + 7 ).map( ( _, i ) => ( i * 31 ) % 256 );
 	ws.serverMessage( bytes.buffer );
 	const event = poll( call, id )[ 1 ];
-	assert.ok( Buffer.from( event.data, 'base64' ).equals( Buffer.from( bytes ) ) );
+	assert.ok( Buffer.from( event.data, 'latin1' ).equals( Buffer.from( bytes ) ) );
 } );
 
 test( 'text keeps Unicode and NUL', () => {
