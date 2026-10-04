@@ -1,0 +1,527 @@
+--====================================================================--
+-- tests/dmc_websockets_html5_spec.lua
+--
+-- Testing the WebSocket class in an HTML5 build using Luna Test,
+-- against a stand-in for the JavaScript bridge (html5_js.js) and
+-- Solar2D's timer, Runtime and system
+--====================================================================--
+
+
+module(..., package.seeall)
+
+
+
+
+--====================================================================--
+--== Test: DMC WebSockets, HTML5 transport
+--====================================================================--
+
+
+-- Semantic Versioning Specification: http://semver.org/
+
+local VERSION = "0.1.0"
+
+
+
+--====================================================================--
+--== Stand-ins
+--====================================================================--
+
+
+--== Clock, timers and frames: run by hand
+
+local clock = 0
+local timers = {}
+local frame_listeners = {}
+
+local function pendingTimers()
+	local n = 0
+	for _, t in ipairs( timers ) do
+		if not t.cancelled then n = n + 1 end
+	end
+	return n
+end
+
+-- one enterFrame
+--
+local function frame()
+	local list = {}
+	for i, f in ipairs( frame_listeners ) do list[i] = f end
+	for _, f in ipairs( list ) do
+		if type( f ) == 'function' then f{ name='enterFrame' } else f:enterFrame{ name='enterFrame' } end
+	end
+end
+
+
+--== Bridge: what html5_js.js does, with a browser socket the test drives
+
+local Bridge
+
+local function newBridge()
+	local b = { apiVersion=1, conns={}, count=0 }
+
+	function b.open( p )
+		if b.open_error then
+			return { ok=false, error={ kind='constructor', name='SyntaxError', message=b.open_error } }
+		end
+		b.count = b.count + 1
+		local id = 'ws:' .. b.count
+		local conn = { id=id, url=p.url, protocols=p.protocols, events={}, sent={}, readyState=0 }
+		b.conns[ id ] = conn
+		b.last = conn
+		return { ok=true, id=id }
+	end
+	function b.send( p )
+		local conn = b.conns[ p.id ]
+		if not conn then return { ok=false, error={ kind='invalid_id' } } end
+		if conn.readyState ~= 1 then return { ok=false, error={ kind='not_open' } } end
+		table.insert( conn.sent, { type=p.type, data=p.data } )
+		return { ok=true }
+	end
+	function b.close( p )
+		local conn = b.conns[ p.id ]
+		if not conn then return { ok=false, error={ kind='invalid_id' } } end
+		conn.close_call = { code=p.code, reason=p.reason }
+		conn.readyState = 2
+		return { ok=true }
+	end
+	function b.poll( p )
+		local conn = b.conns[ p.id ]
+		if not conn then return { ok=false, error={ kind='invalid_id' } } end
+		local events = {}
+		while #conn.events > 0 and #events < p.maxEvents do
+			table.insert( events, table.remove( conn.events, 1 ) )
+		end
+		return { ok=true, events=events, more=#conn.events > 0 }
+	end
+	function b.dispose( p )
+		local conn = b.conns[ p.id ]
+		if conn then conn.disposed = true end
+		b.conns[ p.id ] = nil
+		return { ok=true }
+	end
+
+	return b
+end
+
+-- the browser socket's side
+
+local function serverOpen( conn )
+	conn.readyState = 1
+	table.insert( conn.events, { kind='open' } )
+end
+local function serverMessage( conn, data, mtype )
+	table.insert( conn.events, { kind='message', type=mtype or 'text', data=data } )
+end
+local function serverClose( conn, code, reason )
+	conn.readyState = 3
+	table.insert( conn.events, { kind='close', code=code, reason=reason or '', wasClean=code ~= 1006 } )
+end
+local function serverFail( conn )
+	conn.readyState = 3
+	table.insert( conn.events, { kind='error' } )
+	table.insert( conn.events, { kind='close', code=1006, reason='', wasClean=false } )
+end
+
+
+local WebSocket, Base64
+
+local MODULES = {
+	'dmc_corona.dmc_websockets',
+	'dmc_corona.dmc_websockets.html5',
+	'dmc_corona.dmc_websockets.html5_js'
+}
+
+local saved = {}
+
+
+
+--====================================================================--
+--== Helpers
+--====================================================================--
+
+
+-- load the library as in an HTML5 build, with a new bridge
+--
+local function loadLibrary( bridge )
+	for _, name in ipairs( MODULES ) do package.loaded[ name ] = nil end
+	Bridge = bridge
+	package.loaded[ 'dmc_corona.dmc_websockets.html5_js' ] = bridge
+	WebSocket = require 'dmc_websockets'
+end
+
+local function newSocket( params )
+	params = params or {}
+	params.uri = params.uri or 'ws://example.com/chat'
+	local ws = WebSocket( params )
+	local events = {}
+	ws:addEventListener( ws.EVENT, function( event )
+		table.insert( events, event )
+	end )
+	return ws, Bridge and Bridge.last, events
+end
+
+local function openSocket( params )
+	local ws, conn, events = newSocket( params )
+	serverOpen( conn )
+	frame()
+	return ws, conn, events
+end
+
+local function eventsOf( events, etype )
+	local list = {}
+	for _, e in ipairs( events ) do
+		if e.type == etype then table.insert( list, e ) end
+	end
+	return list
+end
+
+
+
+--====================================================================--
+--== Testing Setup
+--====================================================================--
+
+
+function suite_setup()
+	saved.getInfo = system.getInfo
+	saved.getTimer = system.getTimer
+	saved.timer = _G.timer
+	saved.Runtime = _G.Runtime
+	for _, name in ipairs( MODULES ) do saved[ name ] = package.loaded[ name ] end
+
+	system.getInfo = function( key )
+		if key == 'platform' then return 'html5' end
+	end
+	system.getTimer = function() return clock end
+	_G.timer = {
+		performWithDelay=function( ms, f )
+			local t = { ms=ms, f=f }
+			table.insert( timers, t )
+			return t
+		end,
+		cancel=function( t ) t.cancelled = true end
+	}
+	_G.Runtime = {
+		addEventListener=function( self, name, f )
+			if name == 'enterFrame' then table.insert( frame_listeners, f ) end
+		end,
+		removeEventListener=function( self, name, f )
+			for i = #frame_listeners, 1, -1 do
+				if frame_listeners[i] == f then table.remove( frame_listeners, i ) end
+			end
+		end
+	}
+
+	require 'dmc_corona_boot'
+	Base64 = require 'dmc_websockets.base64'
+end
+
+function suite_teardown()
+	system.getInfo = saved.getInfo
+	system.getTimer = saved.getTimer
+	_G.timer = saved.timer
+	_G.Runtime = saved.Runtime
+	for _, name in ipairs( MODULES ) do package.loaded[ name ] = saved[ name ] end
+end
+
+function setup()
+	clock = 0
+	timers = {}
+	frame_listeners = {}
+	loadLibrary( newBridge() )
+end
+
+
+
+--====================================================================--
+--== Tests
+--====================================================================--
+
+
+function test_openAndMessage()
+	local ws, conn, events = newSocket()
+	assert_equal( 'ws://example.com:80/chat', conn.url )
+	assert_equal( ws.NOT_ESTABLISHED, ws.readyState )
+	assert_false( ws.CAN_PING )
+
+	serverOpen( conn )
+	assert_equal( 0, #events, "events wait for enterFrame" )
+	frame()
+	assert_equal( 1, #eventsOf( events, ws.ONOPEN ) )
+	assert_equal( ws.ESTABLISHED, ws.readyState )
+
+	serverMessage( conn, 'hello' )
+	frame()
+	local msgs = eventsOf( events, ws.ONMESSAGE )
+	assert_equal( 1, #msgs )
+	assert_equal( 'hello', msgs[1].message.data )
+	assert_equal( ws.TEXT, msgs[1].message.type )
+end
+
+function test_eventsInOneFrameKeepTheirOrder()
+	local ws, conn, events = newSocket()
+	serverOpen( conn )
+	serverMessage( conn, 'one' )
+	serverMessage( conn, 'two' )
+	serverClose( conn, 1000, 'bye' )
+	frame()
+	assert_equal( 4, #events )
+	assert_equal( ws.ONOPEN, events[1].type )
+	assert_equal( 'one', events[2].message.data )
+	assert_equal( 'two', events[3].message.data )
+	assert_equal( ws.ONCLOSE, events[4].type )
+end
+
+function test_binaryBothWays()
+	local ws, conn, events = openSocket()
+	local bytes = {}
+	for i = 0, 255 do bytes[ #bytes+1 ] = string.char( i ) end
+	bytes = table.concat( bytes )
+
+	ws:send( bytes, { type=ws.BINARY } )
+	assert_equal( 'binary', conn.sent[1].type )
+	assert_equal( Base64.encode( bytes ), conn.sent[1].data )
+
+	serverMessage( conn, Base64.encode( bytes ), 'binary' )
+	frame()
+	local msgs = eventsOf( events, ws.ONMESSAGE )
+	assert_equal( ws.BINARY, msgs[1].message.type )
+	assert_true( msgs[1].message.data == bytes, "bytes intact" )
+end
+
+function test_badBinaryFromBridgeIsError()
+	local ws, conn, events = openSocket()
+	serverMessage( conn, '@@@@', 'binary' )
+	frame()
+	assert_equal( 0, #eventsOf( events, ws.ONMESSAGE ) )
+	assert_equal( 1, #eventsOf( events, ws.ONERROR ) )
+	assert_true( conn.disposed )
+end
+
+function test_sendsBeforeOpenWait()
+	local ws, conn, events = newSocket()
+	ws:send( 'first' )
+	ws:send( 'second' )
+	frame()
+	assert_equal( 0, #conn.sent )
+
+	serverOpen( conn )
+	frame()
+	assert_equal( 2, #conn.sent )
+	assert_equal( 'first', conn.sent[1].data )
+	assert_equal( 'second', conn.sent[2].data )
+	assert_equal( 'text', conn.sent[1].type )
+end
+
+function test_queuedSendsDroppedWhenConnectFails()
+	local ws, conn, events = newSocket()
+	ws:send( 'never sent' )
+	serverFail( conn )
+	frame()
+	frame()
+	assert_equal( 0, #conn.sent )
+	assert_equal( 0, #frame_listeners, "no listener left behind" )
+end
+
+
+--== Closing
+
+function test_closeFromServer()
+	local ws, conn, events = openSocket()
+	serverClose( conn, 4001, 'game over' )
+	frame()
+	local closes = eventsOf( events, ws.ONCLOSE )
+	assert_equal( 1, #closes )
+	assert_equal( 4001, closes[1].code )
+	assert_equal( 'game over', closes[1].reason )
+	assert_equal( 0, #eventsOf( events, ws.ONERROR ) )
+	assert_equal( ws.CLOSED, ws.readyState )
+	assert_true( conn.disposed )
+	assert_equal( 0, pendingTimers() )
+end
+
+function test_close()
+	local ws, conn, events = openSocket()
+	ws:close()
+	assert_equal( ws.CLOSING_HANDSHAKE, ws.readyState )
+	assert_equal( 1000, conn.close_call.code )
+	assert_equal( 'Purpose for connection has been fulfilled', conn.close_call.reason )
+	assert_equal( 1, pendingTimers(), "waits for the server's close" )
+
+	serverClose( conn, 1000, 'ok' )
+	frame()
+	local closes = eventsOf( events, ws.ONCLOSE )
+	assert_equal( 1, #closes )
+	assert_equal( 1000, closes[1].code )
+	assert_equal( 0, pendingTimers() )
+	assert_true( conn.disposed )
+end
+
+function test_closeWhileConnecting()
+	local ws, conn, events = newSocket()
+	ws:close()
+	assert_equal( 1, #eventsOf( events, ws.ONCLOSE ) )
+	assert_true( conn.disposed )
+
+	-- the browser connects anyway: nothing more
+	serverOpen( conn )
+	frame()
+	assert_equal( 1, #events )
+	assert_equal( ws.STATE_CLOSED, ws:getState() )
+end
+
+function test_closeCodesBrowsersRefuse()
+	local ws, conn = openSocket()
+	ws:_close{ code=1001, reason='Going Away' }
+	assert_not_nil( conn.close_call )
+	assert_nil( conn.close_call.code, "browser picks the code" )
+end
+
+
+--== Failed connections
+
+function test_connectFailureIsError()
+	local ws, conn, events = newSocket()
+	serverFail( conn )
+	frame()
+	local errs = eventsOf( events, ws.ONERROR )
+	assert_equal( 1, #errs )
+	assert_equal( 3000, errs[1].code )
+	assert_match( 'Browser WebSocket failed', errs[1].emsg )
+	assert_equal( 0, #eventsOf( events, ws.ONCLOSE ) )
+	assert_true( conn.disposed )
+end
+
+function test_droppedConnectionIsError()
+	local ws, conn, events = openSocket()
+	serverFail( conn )
+	frame()
+	assert_equal( 1, #eventsOf( events, ws.ONERROR ) )
+	assert_equal( 0, #eventsOf( events, ws.ONCLOSE ) )
+end
+
+function test_closeBeforeOpenIsError()
+	local ws, conn, events = newSocket()
+	serverClose( conn, 1002, '' )
+	frame()
+	assert_equal( 1, #eventsOf( events, ws.ONERROR ) )
+	assert_equal( 0, #eventsOf( events, ws.ONCLOSE ) )
+end
+
+function test_bridgeRefusesUrl()
+	Bridge.open_error = 'The URL is invalid'
+	local ws, conn, events = newSocket()
+	assert_equal( 0, #events, "reported on the next frame" )
+	frame()
+	local errs = eventsOf( events, ws.ONERROR )
+	assert_equal( 1, #errs )
+	assert_equal( 3000, errs[1].code )
+	assert_match( 'SyntaxError: The URL is invalid', errs[1].emsg )
+end
+
+function test_missingBridge()
+	loadLibrary( nil )
+	package.preload[ 'dmc_corona.dmc_websockets.html5_js' ] = nil
+	local print_ = _G.print
+	_G.print = function() end
+	local ok, ws, conn, events = pcall( newSocket )
+	_G.print = print_
+	assert_true( ok, ws )
+	frame()
+	local errs = eventsOf( events, ws.ONERROR )
+	assert_equal( 1, #errs )
+	assert_match( 'html5_js.js', errs[1].emsg )
+end
+
+function test_errorInListenerFailsConnection()
+	local ws, conn, events = openSocket()
+	ws:addEventListener( ws.EVENT, function( event )
+		if event.type == ws.ONMESSAGE then error( 'app bug' ) end
+	end )
+	serverMessage( conn, 'hello' )
+	local print_ = _G.print
+	_G.print = function() end
+	frame()
+	_G.print = print_
+	local errs = eventsOf( events, ws.ONERROR )
+	assert_equal( 1, #errs )
+	assert_equal( 9999, errs[1].code )
+	assert_true( conn.disposed )
+end
+
+
+--== Connections are kept apart
+
+function test_lateEventsOfReplacedConnection()
+	local ws1, conn1, events1 = openSocket()
+	ws1:close()
+	local ws2, conn2, events2 = openSocket()
+	assert_not_equal( conn1.id, conn2.id )
+
+	-- the first browser socket's close arrives late
+	serverClose( conn1, 1000, '' )
+	serverMessage( conn2, 'still here' )
+	frame()
+	assert_equal( 1, #eventsOf( events2, ws2.ONOPEN ) )
+	assert_equal( 1, #eventsOf( events2, ws2.ONMESSAGE ) )
+	assert_equal( 0, #eventsOf( events2, ws2.ONCLOSE ) )
+	assert_equal( ws2.ESTABLISHED, ws2.readyState )
+end
+
+function test_throttle()
+	local ws, conn, events = newSocket{ throttle=WebSocket.LOW }
+	serverOpen( conn )
+	clock = 1000
+	frame() -- first read
+	assert_equal( 1, #events )
+	serverMessage( conn, 'x' )
+	clock = 1010
+	frame()
+	assert_equal( 1, #events, "too soon" )
+	clock = 1000 + WebSocket.LOW
+	frame()
+	assert_equal( 2, #events )
+	ws.throttle = WebSocket.OFF
+end
+
+
+--== Options
+
+function test_url()
+	local ws, conn = newSocket{ uri='wss://example.com/chat?x=y', query={ b='two words', a=1 } }
+	assert_equal( 'wss://example.com:443/chat?x=y&a=1&b=two%20words', conn.url )
+
+	ws, conn = newSocket{ uri='ws://example.com', port=8080 }
+	assert_equal( 'ws://example.com:8080/', conn.url )
+
+	ws, conn = newSocket{ uri='ws://[::1]:9000/a#frag' }
+	assert_equal( 'ws://[::1]:9000/a', conn.url )
+end
+
+function test_protocols()
+	local ws, conn = newSocket{ protocols='chat' }
+	assert_equal( 'chat', conn.protocols[1] )
+	ws, conn = newSocket{ protocols={ 'v2', 'v1' } }
+	assert_equal( 'v2', conn.protocols[1] )
+	assert_equal( 'v1', conn.protocols[2] )
+end
+
+function test_unavailableOptions()
+	assert_error( function() newSocket{ keepalive=1000 } end )
+	assert_error( function() newSocket{ origin='https://example.com' } end )
+	assert_error( function() newSocket{ ssl_params={} } end )
+	newSocket{ keepalive=0 }
+end
+
+function test_pingUnavailable()
+	local ws = openSocket()
+	assert_error( function() ws:ping( 'hi' ) end )
+end
+
+function test_textMustBeUtf8()
+	local ws, conn = openSocket()
+	assert_error( function() ws:send( string.char( 255 ) ) end )
+	ws:send( 'héllo' )
+	assert_equal( 'héllo', conn.sent[1].data )
+end

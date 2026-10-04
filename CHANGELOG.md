@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- HTML5 builds: in the browser the library uses the browser's own WebSocket, through a small JavaScript bridge (`dmc_corona/dmc_websockets/html5_js.js`), with the same API and events. Browsers don't let scripts send pings or set handshake headers, so `ping()`, `ONPONG`, `keepalive`, `origin` and `ssl_params` aren't available there; `WebSockets.CAN_PING` tells an app which it has. See [HTML5 Builds](docs/api.md#html5-builds).
+
 ## 1.4.1 (unreleased)
 
 ### Fixed

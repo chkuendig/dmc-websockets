@@ -12,9 +12,12 @@ module_config = {
 		"dir": "dmc_corona",
 		"files": [
 			"dmc_websockets.lua",
+			"dmc_websockets/base64.lua",
 			"dmc_websockets/exception.lua",
 			"dmc_websockets/frame.lua",
 			"dmc_websockets/handshake.lua",
+			"dmc_websockets/html5.lua",
+			"dmc_websockets/html5_js.js",
 			"dmc_websockets/message.lua",
 			"dmc_websockets/utf8.lua",
 			"lib/sha1.lua"

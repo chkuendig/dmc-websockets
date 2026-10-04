@@ -18,6 +18,7 @@ local WebSockets = require 'dmc_corona.dmc_websockets'
 | [`ws.latency`](#latency) | property | Round trip of the last keep-alive ping |
 | [`ws.throttle`](#throttle) | property | How often sockets are checked for data |
 | [`ws:removeSelf()`](#removeself) | method | Destroy the object |
+| [HTML5 builds](#html5-builds) | | What works differently in a browser |
 | [Configuration](#configuration) | file | The `[DMC_WEBSOCKETS]` section of `dmc_corona.cfg` |
 | [Known issues](#known-issues) | | Behavior that differs from what the API suggests |
 
@@ -194,6 +195,24 @@ Setting `ws.throttle` changes the setting for all connections. A connection crea
 | `ws.TEXT`, `ws.BINARY` | Message types |
 | `WebSockets.VERSION` | Library version, e.g. `'1.4.1'` |
 | `WebSockets.USER_AGENT` | `'dmc_websockets/1.4.1'`, sent in the handshake's `User-Agent` header |
+| `WebSockets.CAN_PING` | `true`, or `false` in [HTML5 builds](#html5-builds), where `ping()`, `ONPONG` and `keepalive` aren't available |
+
+## HTML5 Builds
+
+In the browser there are no sockets, so the library uses the browser's own WebSocket, through a small JavaScript bridge. The API and events are the same, and the browser does the handshake, framing, TLS and the answers to the server's pings. Events are delivered from `enterFrame`, as with sockets, and `throttle` sets how often.
+
+The browser keeps some things to itself:
+
+| Option or method | In an HTML5 build |
+|---|---|
+| [`ping()`](#ping), `keepalive` | Raise an error: browsers don't let scripts send pings or see pongs, so `ONPONG` never comes. Check `WebSockets.CAN_PING`; to notice a dead connection, have the app and server exchange their own messages |
+| `origin`, `ssl_params` | Raise an error: the browser sends its own `Origin` and uses its own TLS settings and certificate checks. The `User-Agent` header is the browser's too |
+| [`send()`](#send) text | Must be valid UTF-8 (raises an error otherwise); send other data as `ws.BINARY` |
+| `ws.latency` | Always `nil` |
+
+Failures look the same as elsewhere, but with less detail: browsers don't say why a connection failed, so an unreachable server, a refused handshake, a TLS problem and a dropped connection all give `ONERROR` code 3000, with a generic `event.emsg`. A close from the server gives `ONCLOSE` with its code and reason. `close()` while still connecting gives `ONCLOSE` right away. Pages served over `https://` can only open `wss://` connections.
+
+Binary messages cross the bridge as base64, which takes time for large ones: about 2 s to encode and 3 s to decode 16MB in plain Lua on a desktop computer, more in a browser. Text crosses as it is.
 
 ## Configuration
 
