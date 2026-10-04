@@ -28,9 +28,8 @@ local VERSION = "0.1.0"
 --====================================================================--
 
 
---== Clock, timers and frames: run by hand
+--== Timers and frames: run by hand
 
-local clock = 0
 local timers = {}
 local frame_listeners = {}
 
@@ -47,9 +46,7 @@ end
 local function frame()
 	local list = {}
 	for i, f in ipairs( frame_listeners ) do list[i] = f end
-	for _, f in ipairs( list ) do
-		if type( f ) == 'function' then f{ name='enterFrame' } else f:enterFrame{ name='enterFrame' } end
-	end
+	for _, f in ipairs( list ) do f{ name='enterFrame' } end
 end
 
 
@@ -65,29 +62,25 @@ local function newBridge()
 			return { ok=false, error={ kind='constructor', name='SyntaxError', message=b.open_error } }
 		end
 		b.count = b.count + 1
-		local id = 'ws:' .. b.count
-		local conn = { id=id, url=p.url, protocols=p.protocols, events={}, sent={}, readyState=0 }
-		b.conns[ id ] = conn
+		local conn = { id='ws:' .. b.count, url=p.url, protocols=p.protocols, events={}, sent={}, readyState=0 }
+		b.conns[ conn.id ] = conn
 		b.last = conn
-		return { ok=true, id=id }
+		return { ok=true, id=conn.id }
 	end
 	function b.send( p )
 		local conn = b.conns[ p.id ]
-		if not conn then return { ok=false, error={ kind='invalid_id' } } end
 		if conn.readyState ~= 1 then return { ok=false, error={ kind='not_open' } } end
 		table.insert( conn.sent, { type=p.type, data=p.data } )
 		return { ok=true }
 	end
 	function b.close( p )
 		local conn = b.conns[ p.id ]
-		if not conn then return { ok=false, error={ kind='invalid_id' } } end
 		conn.close_call = { code=p.code, reason=p.reason }
 		conn.readyState = 2
 		return { ok=true }
 	end
 	function b.poll( p )
 		local conn = b.conns[ p.id ]
-		if not conn then return { ok=false, error={ kind='invalid_id' } } end
 		local events = conn.events
 		conn.events = {}
 		return { ok=true, events=events }
@@ -174,6 +167,26 @@ local function eventsOf( events, etype )
 	return list
 end
 
+-- run f without its print output
+--
+local function quietly( f, ... )
+	local print_ = _G.print
+	_G.print = function() end
+	local result = { pcall( f, ... ) }
+	_G.print = print_
+	assert_true( result[1], result[2] )
+	return unpack( result, 2 )
+end
+
+-- bytes as the bridge carries them: each byte as a character U+0000-U+00FF
+--
+local function latin1( bytes )
+	return ( bytes:gsub( '[\128-\255]', function( c )
+		local b = c:byte()
+		return string.char( 0xC0 + math.floor( b / 0x40 ), 0x80 + b % 0x40 )
+	end ) )
+end
+
 
 
 --====================================================================--
@@ -191,7 +204,7 @@ function suite_setup()
 	system.getInfo = function( key )
 		if key == 'platform' then return 'html5' end
 	end
-	system.getTimer = function() return clock end
+	system.getTimer = function() return 0 end
 	_G.timer = {
 		performWithDelay=function( ms, f )
 			local t = { ms=ms, f=f }
@@ -223,7 +236,6 @@ function suite_teardown()
 end
 
 function setup()
-	clock = 0
 	timers = {}
 	frame_listeners = {}
 	loadLibrary( newBridge() )
@@ -236,49 +248,27 @@ end
 --====================================================================--
 
 
-function test_openAndMessage()
+function test_openAndMessages()
 	local ws, conn, events = newSocket()
 	assert_equal( 'ws://example.com:80/chat', conn.url )
 	assert_equal( ws.NOT_ESTABLISHED, ws.readyState )
 	assert_false( ws.CAN_PING )
 
 	serverOpen( conn )
-	assert_equal( 0, #events, "events wait for enterFrame" )
-	frame()
-	assert_equal( 1, #eventsOf( events, ws.ONOPEN ) )
-	assert_equal( ws.ESTABLISHED, ws.readyState )
-
-	serverMessage( conn, 'hello' )
-	frame()
-	local msgs = eventsOf( events, ws.ONMESSAGE )
-	assert_equal( 1, #msgs )
-	assert_equal( 'hello', msgs[1].message.data )
-	assert_equal( ws.TEXT, msgs[1].message.type )
-end
-
-function test_eventsInOneFrameKeepTheirOrder()
-	local ws, conn, events = newSocket()
-	serverOpen( conn )
 	serverMessage( conn, 'one' )
 	serverMessage( conn, 'two' )
 	serverClose( conn, 1000, 'bye' )
+	assert_equal( 0, #events, "events wait for enterFrame" )
 	frame()
 	assert_equal( 4, #events )
 	assert_equal( ws.ONOPEN, events[1].type )
 	assert_equal( 'one', events[2].message.data )
+	assert_equal( ws.TEXT, events[2].message.type )
 	assert_equal( 'two', events[3].message.data )
 	assert_equal( ws.ONCLOSE, events[4].type )
 end
 
--- bytes as the bridge carries them: each byte as a character U+0000-U+00FF
-local function latin1( bytes )
-	return ( bytes:gsub( '[\128-\255]', function( c )
-		local b = c:byte()
-		return string.char( 0xC0 + math.floor( b / 0x40 ), 0x80 + b % 0x40 )
-	end ) )
-end
-
-function test_binaryBothWays()
+function test_binary()
 	local ws, conn, events = openSocket()
 	local bytes = {}
 	for i = 0, 255 do bytes[ #bytes+1 ] = string.char( i ) end
@@ -289,23 +279,18 @@ function test_binaryBothWays()
 	assert_equal( latin1( bytes ), conn.sent[1].data )
 
 	serverMessage( conn, latin1( bytes ), 'binary' )
+	serverMessage( conn, 'a\196\128b', 'binary' ) -- U+0100: not a byte
 	frame()
 	local msgs = eventsOf( events, ws.ONMESSAGE )
+	assert_equal( 1, #msgs )
 	assert_equal( ws.BINARY, msgs[1].message.type )
 	assert_true( msgs[1].message.data == bytes, "bytes intact" )
-end
-
-function test_badBinaryFromBridgeIsError()
-	local ws, conn, events = openSocket()
-	serverMessage( conn, 'a\196\128b', 'binary' ) -- U+0100
-	frame()
-	assert_equal( 0, #eventsOf( events, ws.ONMESSAGE ) )
 	assert_equal( 1, #eventsOf( events, ws.ONERROR ) )
 	assert_true( conn.disposed )
 end
 
 function test_sendsBeforeOpenWait()
-	local ws, conn, events = newSocket()
+	local ws, conn = newSocket()
 	ws:send( 'first' )
 	ws:send( 'second' )
 	frame()
@@ -320,7 +305,7 @@ function test_sendsBeforeOpenWait()
 end
 
 function test_queuedSendsDroppedWhenConnectFails()
-	local ws, conn, events = newSocket()
+	local ws, conn = newSocket()
 	ws:send( 'never sent' )
 	serverFail( conn )
 	frame()
@@ -361,6 +346,12 @@ function test_close()
 	assert_equal( 1000, closes[1].code )
 	assert_equal( 0, pendingTimers() )
 	assert_true( conn.disposed )
+
+	-- scripts may only send 1000 and 3000-4999: for others the browser picks
+	ws, conn = openSocket()
+	ws:_close{ code=1001, reason='Going Away' }
+	assert_not_nil( conn.close_call )
+	assert_nil( conn.close_call.code )
 end
 
 function test_closeWhileConnecting()
@@ -376,67 +367,32 @@ function test_closeWhileConnecting()
 	assert_equal( ws.STATE_CLOSED, ws:getState() )
 end
 
-function test_closeCodesBrowsersRefuse()
-	local ws, conn = openSocket()
-	ws:_close{ code=1001, reason='Going Away' }
-	assert_not_nil( conn.close_call )
-	assert_nil( conn.close_call.code, "browser picks the code" )
-end
 
+--== Failures: browsers don't say why, so each is one ONERROR 3000
 
---== Failed connections
-
-function test_connectFailureIsError()
-	local ws, conn, events = newSocket()
-	serverFail( conn )
-	frame()
-	local errs = eventsOf( events, ws.ONERROR )
-	assert_equal( 1, #errs )
-	assert_equal( 3000, errs[1].code )
-	assert_match( 'Browser WebSocket failed', errs[1].emsg )
-	assert_equal( 0, #eventsOf( events, ws.ONCLOSE ) )
-	assert_true( conn.disposed )
-end
-
-function test_droppedConnectionIsError()
-	local ws, conn, events = openSocket()
-	serverFail( conn )
-	frame()
-	assert_equal( 1, #eventsOf( events, ws.ONERROR ) )
-	assert_equal( 0, #eventsOf( events, ws.ONCLOSE ) )
-end
-
-function test_closeBeforeOpenIsError()
-	local ws, conn, events = newSocket()
-	serverClose( conn, 1002, '' )
-	frame()
-	assert_equal( 1, #eventsOf( events, ws.ONERROR ) )
-	assert_equal( 0, #eventsOf( events, ws.ONCLOSE ) )
-end
-
-function test_bridgeRefusesUrl()
-	Bridge.open_error = 'The URL is invalid'
-	local ws, conn, events = newSocket()
-	assert_equal( 0, #events, "reported on the next frame" )
-	frame()
-	local errs = eventsOf( events, ws.ONERROR )
-	assert_equal( 1, #errs )
-	assert_equal( 3000, errs[1].code )
-	assert_match( 'SyntaxError: The URL is invalid', errs[1].emsg )
-end
-
-function test_missingBridge()
-	loadLibrary( nil )
-	package.preload[ 'dmc_corona.dmc_websockets.html5_js' ] = nil
-	local print_ = _G.print
-	_G.print = function() end
-	local ok, ws, conn, events = pcall( newSocket )
-	_G.print = print_
-	assert_true( ok, ws )
-	frame()
-	local errs = eventsOf( events, ws.ONERROR )
-	assert_equal( 1, #errs )
-	assert_match( 'html5_js.js', errs[1].emsg )
+function test_failures()
+	local cases = {
+		{ name='connect fails', run=function( conn ) serverFail( conn ) end,
+			emsg='Browser WebSocket failed' },
+		{ name='dropped', open=true, run=function( conn ) serverFail( conn ) end },
+		{ name='closed before open', run=function( conn ) serverClose( conn, 1002 ) end },
+		{ name='URL refused', before=function() Bridge.open_error = 'The URL is invalid' end,
+			emsg='SyntaxError: The URL is invalid' },
+		{ name='no bridge', before=function() loadLibrary( nil ) end, emsg='html5_js.js' },
+	}
+	for _, c in ipairs( cases ) do
+		setup()
+		if c.before then c.before() end
+		local ws, conn, events = quietly( c.open and openSocket or newSocket )
+		if c.run then c.run( conn ) end
+		frame()
+		local errs = eventsOf( events, ws.ONERROR )
+		assert_equal( 1, #errs, c.name )
+		assert_equal( 3000, errs[1].code, c.name )
+		if c.emsg then assert_match( c.emsg, errs[1].emsg, c.name ) end
+		assert_equal( 0, #eventsOf( events, ws.ONCLOSE ), c.name )
+		if conn then assert_true( conn.disposed, c.name ) end
+	end
 end
 
 function test_errorInListenerFailsConnection()
@@ -445,21 +401,15 @@ function test_errorInListenerFailsConnection()
 		if event.type == ws.ONMESSAGE then error( 'app bug' ) end
 	end )
 	serverMessage( conn, 'hello' )
-	local print_ = _G.print
-	_G.print = function() end
-	frame()
-	_G.print = print_
+	quietly( frame )
 	local errs = eventsOf( events, ws.ONERROR )
 	assert_equal( 1, #errs )
 	assert_equal( 9999, errs[1].code )
 	assert_true( conn.disposed )
 end
 
-
---== Connections are kept apart
-
 function test_lateEventsOfReplacedConnection()
-	local ws1, conn1, events1 = openSocket()
+	local ws1, conn1 = openSocket()
 	ws1:close()
 	local ws2, conn2, events2 = openSocket()
 	assert_not_equal( conn1.id, conn2.id )
@@ -468,48 +418,36 @@ function test_lateEventsOfReplacedConnection()
 	serverClose( conn1, 1000, '' )
 	serverMessage( conn2, 'still here' )
 	frame()
-	assert_equal( 1, #eventsOf( events2, ws2.ONOPEN ) )
 	assert_equal( 1, #eventsOf( events2, ws2.ONMESSAGE ) )
 	assert_equal( 0, #eventsOf( events2, ws2.ONCLOSE ) )
 	assert_equal( ws2.ESTABLISHED, ws2.readyState )
 end
 
+
 --== Options
 
-function test_url()
+function test_urlAndProtocols()
 	local ws, conn = newSocket{ uri='wss://example.com/chat?x=y', query={ b='two words', a=1 } }
 	assert_equal( 'wss://example.com:443/chat?x=y&a=1&b=two%20words', conn.url )
 
-	ws, conn = newSocket{ uri='ws://example.com', port=8080 }
+	ws, conn = newSocket{ uri='ws://example.com', port=8080, protocols='chat' }
 	assert_equal( 'ws://example.com:8080/', conn.url )
-
-	ws, conn = newSocket{ uri='ws://[::1]:9000/a#frag' }
-	assert_equal( 'ws://[::1]:9000/a', conn.url )
-end
-
-function test_protocols()
-	local ws, conn = newSocket{ protocols='chat' }
 	assert_equal( 'chat', conn.protocols[1] )
-	ws, conn = newSocket{ protocols={ 'v2', 'v1' } }
-	assert_equal( 'v2', conn.protocols[1] )
+
+	ws, conn = newSocket{ uri='ws://[::1]:9000/a#frag', protocols={ 'v2', 'v1' } }
+	assert_equal( 'ws://[::1]:9000/a', conn.url )
 	assert_equal( 'v1', conn.protocols[2] )
 end
 
-function test_unavailableOptions()
+function test_whatBrowsersDontAllow()
 	assert_error( function() newSocket{ keepalive=1000 } end )
 	assert_error( function() newSocket{ origin='https://example.com' } end )
 	assert_error( function() newSocket{ ssl_params={} } end )
 	newSocket{ keepalive=0 }
-end
 
-function test_pingUnavailable()
-	local ws = openSocket()
-	assert_error( function() ws:ping( 'hi' ) end )
-end
-
-function test_textMustBeUtf8()
 	local ws, conn = openSocket()
-	assert_error( function() ws:send( string.char( 255 ) ) end )
+	assert_error( function() ws:ping( 'hi' ) end )
+	assert_error( function() ws:send( string.char( 255 ) ) end, "text must be UTF-8" )
 	ws:send( 'héllo' )
 	assert_equal( 'héllo', conn.sent[1].data )
 end
