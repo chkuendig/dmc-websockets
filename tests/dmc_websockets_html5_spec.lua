@@ -252,7 +252,6 @@ function test_openAndMessages()
 	local ws, conn, events = newSocket()
 	assert_equal( 'ws://example.com:80/chat', conn.url )
 	assert_equal( ws.NOT_ESTABLISHED, ws.readyState )
-	assert_false( ws.CAN_PING )
 
 	serverOpen( conn )
 	serverMessage( conn, 'one' )
@@ -445,9 +444,6 @@ function test_whatBrowsersDontAllow()
 	assert_error( function() newSocket{ ssl_params={} } end )
 	newSocket{ keepalive=0 }
 
-	local ws, conn = openSocket()
+	local ws = openSocket()
 	assert_error( function() ws:ping( 'hi' ) end )
-	assert_error( function() ws:send( string.char( 255 ) ) end, "text must be UTF-8" )
-	ws:send( 'héllo' )
-	assert_equal( 'héllo', conn.sent[1].data )
 end

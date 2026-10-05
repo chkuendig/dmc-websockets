@@ -120,11 +120,10 @@ local ws_utf8 = require 'dmc_websockets.utf8'
 -- connection, see dmc_websockets/html5.lua
 local IS_HTML5 = system.getInfo ~= nil and system.getInfo( 'platform' ) == 'html5'
 
-local Html5, Sockets, urllib, ws_handshake
+local Sockets, urllib, ws_handshake
 if IS_HTML5 then
-	Html5 = require 'dmc_websockets.html5'
-	Sockets = Html5 -- throttle constants and setting
-	urllib = Html5.url
+	Sockets = require 'dmc_websockets.html5'
+	urllib = Sockets.url
 else
 	Sockets = require 'dmc_sockets'
 	urllib = require 'socket.url'
@@ -189,10 +188,6 @@ local WebSocket = newClass( { ObjectBase, StatesMix }, {name="DMC WebSocket"} )
 -- version for the the group of WebSocket files
 WebSocket.VERSION = VERSION
 WebSocket.USER_AGENT = 'dmc_websockets/'..WebSocket.VERSION
-
--- false in HTML5 builds: browsers don't let scripts send pings or see
--- pongs, so there ping(), ONPONG and keep-alive aren't available
-WebSocket.CAN_PING = not IS_HTML5
 
 --== Message Type Constants
 
@@ -385,10 +380,10 @@ function WebSocket:send( data, params )
 	assert( type(data)=='string', "expected string for send()")
 	params = params or {}
 	params.type = params.type or WebSocket.TEXT
-	if IS_HTML5 and params.type ~= WebSocket.BINARY then
-		-- text reaches the browser as JSON, which carries only UTF-8
+	if params.type ~= WebSocket.BINARY then
+		-- RFC 6455 5.6: a server fails the connection on anything else
 		assert( ws_utf8.isValid( data ),
-			"WebSocket: text must be valid UTF-8 in HTML5 builds, send other data as BINARY" )
+			"WebSocket: text must be valid UTF-8, send other data as BINARY" )
 	end
 	--==--
 
@@ -840,7 +835,7 @@ function WebSocket:_doBrowserConnect( scheme )
 	local protocols = self._protocols
 	if type( protocols ) == 'string' then protocols = { protocols } end
 
-	self._socket = Html5.connect{
+	self._socket = Sockets.connect{
 		url=scheme .. '://' .. host .. ':' .. self._port .. self._path,
 		protocols=protocols,
 		onEvent=self._browser_event_handler

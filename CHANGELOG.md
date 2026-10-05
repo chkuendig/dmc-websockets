@@ -4,7 +4,11 @@
 
 ### Added
 
-- HTML5 builds: in the browser the library uses the browser's own WebSocket, through a small JavaScript bridge (`dmc_corona/dmc_websockets/html5_js.js`), with the same API and events. Browsers don't let scripts send pings or set handshake headers, so `ping()`, `ONPONG`, `keepalive`, `origin` and `ssl_params` aren't available there; `WebSockets.CAN_PING` tells an app which it has. See [HTML5 Builds](docs/api.md#html5-builds).
+- HTML5 builds: in the browser the library uses the browser's own WebSocket, through a small JavaScript bridge (`dmc_corona/dmc_websockets/html5_js.js`), with the same API and events. Browsers don't let scripts send pings or set handshake headers, so `ping()`, `ONPONG`, `keepalive`, `origin` and `ssl_params` aren't available there. See [HTML5 Builds](docs/api.md#html5-builds).
+
+### Changed
+
+- `send()` raises an error for text that isn't valid UTF-8, on every platform. RFC 6455 requires text to be UTF-8, and a server fails the connection (1007) when it isn't; send other data as `ws.BINARY`.
 
 ## 1.4.1 (unreleased)
 

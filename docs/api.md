@@ -129,7 +129,7 @@ ws:send( 'hello' )                          -- text
 ws:send( png_bytes, { type=ws.BINARY } )    -- binary
 ```
 
-`data` must be a string. Text messages should be valid UTF-8. Messages are queued until they can be written, so `send()` doesn't block, and large messages are sent in pieces over several frames of the app.
+`data` must be a string. Text must be valid UTF-8, as RFC 6455 requires (`send()` raises an error otherwise); send other data as `ws.BINARY`. Messages are queued until they can be written, so `send()` doesn't block, and large messages are sent in pieces over several frames of the app.
 
 ### close()
 
@@ -195,7 +195,6 @@ Setting `ws.throttle` changes the setting for all connections. A connection crea
 | `ws.TEXT`, `ws.BINARY` | Message types |
 | `WebSockets.VERSION` | Library version, e.g. `'1.4.1'` |
 | `WebSockets.USER_AGENT` | `'dmc_websockets/1.4.1'`, sent in the handshake's `User-Agent` header |
-| `WebSockets.CAN_PING` | `true`, or `false` in [HTML5 builds](#html5-builds), where `ping()`, `ONPONG` and `keepalive` aren't available |
 
 ## HTML5 Builds
 
@@ -205,9 +204,8 @@ The browser keeps some things to itself:
 
 | Option or method | In an HTML5 build |
 |---|---|
-| [`ping()`](#ping), `keepalive` | Raise an error: browsers don't let scripts send pings or see pongs, so `ONPONG` never comes. Check `WebSockets.CAN_PING`; to notice a dead connection, have the app and server exchange their own messages |
+| [`ping()`](#ping), `keepalive` | Raise an error: browsers don't let scripts send pings or see pongs, so `ONPONG` never comes. To notice a dead connection, have the app and server exchange their own messages |
 | `origin`, `ssl_params` | Raise an error: the browser sends its own `Origin` and uses its own TLS settings and certificate checks. The `User-Agent` header is the browser's too |
-| [`send()`](#send) text | Must be valid UTF-8 (raises an error otherwise); send other data as `ws.BINARY` |
 | `ws.latency` | Always `nil` |
 
 Failures look the same as elsewhere, but with less detail: browsers don't say why a connection failed, so an unreachable server, a refused handshake, a TLS problem and a dropped connection all give `ONERROR` code 3000, with a generic `event.emsg`. A close from the server gives `ONCLOSE` with its code and reason. `close()` while still connecting gives `ONCLOSE` right away. Pages served over `https://` can only open `wss://` connections.
