@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `close()` while still connecting raised an error on the next frame outside HTML5 builds (`async_tcp.lua: attempt to index field '_socket' (a nil value)`): the bundled dmc-sockets left the TCP connect scheduled. Rebuilt with dmc-sockets that cancels it.
+
 ## 1.6.0 (2026-10-09)
 
 ### Changed

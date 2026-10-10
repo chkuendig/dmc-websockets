@@ -312,6 +312,13 @@ function ATCPSocket:close()
 	-- print( 'ATCPSocket:close' )
 	self:_stopWriteHandler()
 	self._write_queue = {}
+	-- cancel a pending connect or read: resumed on a later frame,
+	-- it would find the socket gone
+	self._coroutine_queue = {}
+	if self._coroutine_queue_active then
+		Runtime:removeEventListener( 'enterFrame', self )
+		self._coroutine_queue_active = false
+	end
 	self:superCall( 'close' )
 end
 
@@ -598,12 +605,15 @@ function ATCPSocket:_addCoroutineToQueue( func )
 	end
 end
 
-function ATCPSocket:_removeCoroutineFromQueue()
+-- co: the coroutine to remove, if it's still first in the queue
+-- (close() may have emptied the queue, and a new connect() filled it)
+--
+function ATCPSocket:_removeCoroutineFromQueue( co )
 	-- print( 'ATCPSocket:_removeCoroutineFromQueue' )
-	-- assert( type(func)=='function', "expected function" )
+	co = co or coroutine.running()
 	--==--
 
-	if #self._coroutine_queue > 0 then
+	if #self._coroutine_queue > 0 and self._coroutine_queue[1] == co then
 		tremove( self._coroutine_queue, 1 )
 	end
 
@@ -621,7 +631,7 @@ function ATCPSocket:_processCoroutineQueue()
 	if co then
 		local status, msg = coroutine.resume( co )
 		if not status then
-			self:_removeCoroutineFromQueue()
+			self:_removeCoroutineFromQueue( co )
 			print( "ERROR in async_tcp coroutine" )
 			error( msg )
 		end
@@ -629,7 +639,7 @@ function ATCPSocket:_processCoroutineQueue()
 	end
 
 	-- coroutine is finished, remove it
-	self:_removeCoroutineFromQueue()
+	self:_removeCoroutineFromQueue( co )
 end
 
 
