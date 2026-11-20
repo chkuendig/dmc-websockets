@@ -5,6 +5,7 @@
 ### Fixed
 
 - `close()` while connecting cancels the pending TCP connect and its frame listener, so later frames cannot resume it against a removed socket. Reconnecting with `connect()` starts with a fresh connection.
+- A successful connect callback can close and reconnect without the completed connect delivering a stale timeout to the new attempt.
 
 ## 1.7.0 (2026-10-17)
 

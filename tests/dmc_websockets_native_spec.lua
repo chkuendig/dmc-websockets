@@ -42,9 +42,9 @@ local function frame()
 	end
 end
 
--- a TCP socket whose connect never finishes
+-- a TCP socket whose connect result and received bytes are controlled
 --
-local function pendingTcp()
+local function controlledTcp()
 	local raw = { closed=false, connects=0, data='' }
 	raw_sockets[#raw_sockets+1] = raw
 	function raw:connect()
@@ -89,7 +89,7 @@ function suite_setup()
 		end
 	end
 
-	socket.tcp = pendingTcp
+	socket.tcp = controlledTcp
 	socket.select = function() return {}, {} end
 	system.getTimer = function() return 0 end
 	_G.timer = {
@@ -213,4 +213,28 @@ function test_refusedConnectStillReportsAnErrorOnTheFirstFrame()
 	for _=1,3 do frame() end
 	assert_equal( 1, #events )
 	assert_equal( 0, #frame_listeners )
+end
+
+function test_connectCallbackCanCloseAndQueueANewConnect()
+	local sock = Sockets:create( Sockets.ATCP )
+	local calls = 0
+	connect_result = 1
+	sock:connect( 'example.com', 80, { onConnect=function( event )
+		if event.status ~= sock.CONNECTED then return end
+		calls = calls + 1
+		sock:close()
+		connect_result = nil
+		sock:connect( 'example.com', 80, { onConnect=function() calls=calls+1 end } )
+	end } )
+	frame()
+	assert_equal( 1, calls )
+	assert_equal( 1, #sock._coroutine_queue, 'finishing callback keeps the new connect queued' )
+	frame()
+	assert_equal( 1, raw_sockets[2].connects )
+	connect_result = 1
+	frame()
+	assert_equal( 2, calls )
+	assert_equal( 0, #sock._coroutine_queue )
+	assert_false( sock._coroutine_queue_active )
+	sock:close()
 end
