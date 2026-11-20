@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.1 (unreleased)
+
+### Fixed
+
+- `close()` while connecting cancels the pending TCP connect and its frame listener, so later frames cannot resume it against a removed socket. Reconnecting with `connect()` starts with a fresh connection.
+
 ## 1.7.0 (2026-10-17)
 
 ### Added
